@@ -20,11 +20,15 @@ export train_step!, predict, loss_and_accuracy_clean
 # Activation Functions
 export ReLU, relu, SoftMax, softmax
 
+# Utils
+export im2col!, col2im!
+
 include("engine.jl")
 include("activations.jl")
 include("layers.jl")
 include("losses.jl")
 include("optimizers.jl")
 include("training.jl")
+include("utils.jl")
 
 end

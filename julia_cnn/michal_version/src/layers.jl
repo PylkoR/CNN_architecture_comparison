@@ -87,16 +87,23 @@ end
 
 function (c::ConvLayer)(x)
   W_x, H_x, _ = size(x.data)
-  k_w, k_h, _, C_out = size(c.W.data)
+  k_w, k_h, C_in, C_out = size(c.W.data)
   
   W_y = W_x - k_w + 2 * c.pad + 1
   H_y = H_x - k_h + 2 * c.pad + 1
   
-  if c.b !== nothing
-      return GraphNode(:conv, (c.W, x, c.b), zeros(Float32, W_y, H_y, C_out), cache=Dict(:pad => c.pad))
-  else
-      return GraphNode(:conv, (c.W, x), zeros(Float32, W_y, H_y, C_out), cache=Dict(:pad => c.pad))
-  end
+  col_size = (k_w * k_h * C_in, W_y * H_y)
+  im2col_buffer = zeros(Float32, col_size)
+  dcol_buffer   = zeros(Float32, col_size)
+  
+  cache = Dict{Symbol, Any}(
+      :pad => c.pad, 
+      :col => im2col_buffer, 
+      :dcol => dcol_buffer
+  )
+  
+  args = c.b !== nothing ? (c.W, x, c.b) : (c.W, x)
+  return GraphNode(:conv, args, zeros(Float32, W_y, H_y, C_out), cache=cache)
 end
 
 function primal!(y::GraphNode{:conv}; train_mode=true)
@@ -109,34 +116,24 @@ function primal!(y::GraphNode{:conv}; train_mode=true)
   y_d = y.data::Array{Float32, 3}
   
   pad = y.cache[:pad]::Int
-
+  col = y.cache[:col]::Matrix{Float32}
+  
   k_w, k_h, C_in, C_out = size(W_d)
-  W_x, H_x, _ = size(x_d)
   W_y, H_y, _ = size(y_d)
 
-  fill!(y_d, 0.0f0)
-
-  @inbounds for c_out in 1:C_out, c_in in 1:C_in
-      for j in 1:H_y, i in 1:W_y
-          val = 0.0f0 :: Float32
-          for dj in 1:k_h, di in 1:k_w
-              xi = i + di - 1 - pad
-              xj = j + dj - 1 - pad
-              
-              if 1 <= xi <= W_x && 1 <= xj <= H_x
-                  val += x_d[xi, xj, c_in] * W_d[di, dj, c_in, c_out]
-              end
-          end
-          y_d[i, j, c_out] += val
-      end
-  end
+  im2col!(col, x_d, k_w, k_h, pad)
+  
+  W_mat = reshape(W_d, :, C_out)
+  Y_mat = reshape(y_d, :, C_out)
+  
+  mul!(Y_mat, transpose(col), W_mat)
   
   if has_bias
       b_d = y.args[3].data::Vector{Float32}
-      @inbounds for c_out in 1:C_out
-          b_val = b_d[c_out]
-          for j in 1:H_y, i in 1:W_y
-              y_d[i, j, c_out] += b_val
+      for c_out in 1:C_out
+          bias_val = b_d[c_out]
+          @inbounds @simd for i in 1:(W_y * H_y)
+              Y_mat[i, c_out] += bias_val
           end
       end
   end
@@ -149,40 +146,33 @@ function adjoint!(y::GraphNode{:conv})
   has_bias = length(y.args) == 3
   
   W_d = W.data::Array{Float32, 4}
-  x_d = x.data::Array{Float32, 3}
   y_g = y.grad::Array{Float32, 3}
   W_g = W.grad::Array{Float32, 4}
   x_g = x.grad::Array{Float32, 3}
   
-  pad = y.cache[:pad]::Int
-
+  pad  = y.cache[:pad]::Int
+  col  = y.cache[:col]::Matrix{Float32}
+  dcol = y.cache[:dcol]::Matrix{Float32}
+  
   k_w, k_h, C_in, C_out = size(W_d)
-  W_x, H_x, _ = size(x_d)
-  W_y, H_y, _ = size(y_g)
-
-  @inbounds for c_out in 1:C_out, c_in in 1:C_in
-      for j in 1:H_y, i in 1:W_y
-          dy = y_g[i, j, c_out]
-          for dj in 1:k_h, di in 1:k_w
-              xi = i + di - 1 - pad
-              xj = j + dj - 1 - pad
-              
-              if 1 <= xi <= W_x && 1 <= xj <= H_x
-                  W_g[di, dj, c_in, c_out] += x_d[xi, xj, c_in] * dy
-                  x_g[xi, xj, c_in] += W_d[di, dj, c_in, c_out] * dy
-              end
-          end
-      end
-  end
+  
+  W_mat = reshape(W_d, :, C_out)
+  dW_mat = reshape(W_g, :, C_out)
+  dY_mat = reshape(y_g, :, C_out)
+  
+  mul!(dW_mat, col, dY_mat, 1.0f0, 1.0f0)
+  mul!(dcol, W_mat, transpose(dY_mat))
+  
+  col2im!(x_g, dcol, k_w, k_h, pad)
   
   if has_bias
       b_g = y.args[3].grad::Vector{Float32}
-      @inbounds for c_out in 1:C_out
-          sum_g = 0.0f0
-          for j in 1:H_y, i in 1:W_y
-              sum_g += y_g[i, j, c_out]
+      for c_out in 1:C_out
+          sum_val = 0.0f0
+          @inbounds @simd for i in 1:size(dY_mat, 1)
+              sum_val += dY_mat[i, c_out]
           end
-          b_g[c_out] += sum_g
+          b_g[c_out] += sum_val
       end
   end
   return nothing
