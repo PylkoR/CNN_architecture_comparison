@@ -8,13 +8,13 @@ end
 
 function primal!(y::GraphNode{:relu, 1}; train_mode=true)
   x, = y.args
-  y.data .= max.(0, x.data)
+  @. y.data = max(0, x.data)
   return nothing
 end
 
 function adjoint!(y::GraphNode{:relu, 1})
   x, = y.args
-  x.grad .+= (x.data .> 0) .* y.grad
+  @. x.grad += (x.data > 0) * y.grad
   return nothing
 end
 

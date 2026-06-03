@@ -1,3 +1,5 @@
+using LinearAlgebra
+
 # --- Flatten ---
 struct Flatten <: Operator end
 
@@ -40,14 +42,14 @@ end
 
 function primal!(y::GraphNode{:mul, 2}; train_mode=true)
   W, x = y.args
-  y.data .= W.data * x.data
+  mul!(y.data, W.data, x.data)
   return nothing
 end
 
 function adjoint!(y::GraphNode{:mul, 2})
   W, x = y.args
-  W.grad .+= y.grad * x.data'
-  x.grad .+= W.data' * y.grad
+  mul!(W.grad, y.grad, x.data', 1.0f0, 1.0f0) 
+  mul!(x.grad, W.data', y.grad, 1.0f0, 1.0f0)
   return nothing
 end
 
@@ -105,6 +107,7 @@ function primal!(y::GraphNode{:conv}; train_mode=true)
   W_d = W.data::Array{Float32, 4}
   x_d = x.data::Array{Float32, 3}
   y_d = y.data::Array{Float32, 3}
+  
   pad = y.cache[:pad]::Int
 
   k_w, k_h, C_in, C_out = size(W_d)
@@ -259,12 +262,13 @@ end
 
 function primal!(y::GraphNode{:dropout, 1}; train_mode=true)
   x, = y.args
-  p = y.cache[:p]
+  p = Float32(y.cache[:p])
   
   if train_mode
       mask = rand(Float32, size(x.data)...) .> p
       y.cache[:mask] = mask
-      y.data .= (x.data .* mask) ./ Float32(1.0 - p)
+      
+      @. y.data = (x.data * mask) / (1.0f0 - p)
   else
       y.data .= x.data
   end
@@ -274,9 +278,10 @@ end
 function adjoint!(y::GraphNode{:dropout, 1})
   x, = y.args
   if haskey(y.cache, :mask)
-      p = y.cache[:p]
+      p = Float32(y.cache[:p])
       mask = y.cache[:mask]
-      x.grad .+= (y.grad .* mask) ./ Float32(1.0 - p)
+      
+      @. x.grad += (y.grad * mask) / (1.0f0 - p)
   else
       x.grad .+= y.grad
   end

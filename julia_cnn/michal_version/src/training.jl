@@ -18,8 +18,8 @@ function train_step!(graph, input_node, target_node, x_batch, y_batch, eta)
     for i in 1:batch_size
         zero_activations_grad!(graph)
         
-        x_single = x_batch[:, :, :, i]
-        y_single = y_batch[:, i] 
+        x_single = @view x_batch[:, :, :, i]
+        y_single = @view y_batch[:, i]
         
         forward!(graph, input_node => x_single, target_node => y_single, train_mode=true)
         backward!(graph)
