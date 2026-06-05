@@ -27,7 +27,8 @@ end
 
 function dense(pair::Pair{Int64, Int64}, activation=nothing)
   n, m = pair
-  W = GraphNode(randn(Float32, m, n) .* sqrt(2.0f0 / n), true)
+  W_init = glorot_uniform(n, m, m, n)
+  W = GraphNode(W_init, true)
   b = GraphNode(zeros(Float32, m), true)
   d = Dense(W, b)
   return activation === nothing ? d : tuple(d, activation())
@@ -78,7 +79,9 @@ function conv2d(kernel::Tuple{Int, Int}, channels::Pair{Int, Int}; pad::Int=0, b
   C_in, C_out = channels
   
   fan_in = k_w * k_h * C_in
-  W = GraphNode(randn(Float32, k_w, k_h, C_in, C_out) .* sqrt(2.0f0 / fan_in), true)
+  fan_out = k_w * k_h * C_out
+  W_init = glorot_uniform(fan_in, fan_out, k_w, k_h, C_in, C_out)
+  W = GraphNode(W_init, true)
   
   b = bias ? GraphNode(zeros(Float32, C_out), true) : nothing
 

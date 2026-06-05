@@ -55,3 +55,8 @@ function col2im!(x_grad::AbstractArray{Float32, 3}, col::AbstractMatrix{Float32}
         end
     end
 end
+
+function glorot_uniform(fan_in::Int, fan_out::Int, dims...)
+    limit = sqrt(6.0f0 / (fan_in + fan_out))
+    return (rand(Float32, dims...) .- 0.5f0) .* Float32(2.0f0 * limit)
+end
