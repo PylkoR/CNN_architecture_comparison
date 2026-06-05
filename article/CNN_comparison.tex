@@ -59,6 +59,51 @@ To investigate and overcome these fundamental bottlenecks, we developed a custom
 
 \subsection{Time complexity}
 
+\begin{table}[htbp]
+\centering
+\caption{My Network efficiency results}
+\label{tab:mynet_efficiency}
+\begin{tabular}{|c|c|c|c|c|c|}
+\hline
+\textbf{Trial} & \textbf{Time (s)} & \textbf{Allocs} & \textbf{Mem (GB)} & \textbf{Train Acc (\%)} & \textbf{Test Acc (\%)} \\ \hline
+1 & 21,74 & $4,24 \times 10^7$ & 2,47 & 87,74 & 86,53 \\ \hline
+2 & 21,99 & $4,24 \times 10^7$ & 2,47 & 87,78 & 86,53 \\ \hline
+3 & 22,02 & $4,24 \times 10^7$ & 2,47 & 87,87 & 86,67 \\ \hline
+4 & 21,50 & $4,24 \times 10^7$ & 2,47 & 87,74 & 86,62 \\ \hline
+5 & 21,81 & $4,24 \times 10^7$ & 2,47 & 87,64 & 86,57 \\ \hline
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Flux efficiency results}
+\label{tab:flux_efficiency}
+\begin{tabular}{|c|c|c|c|c|c|}
+\hline
+\textbf{Trial} & \textbf{Time (s)} & \textbf{Allocs} & \textbf{Mem (GB)} & \textbf{Train Acc (\%)} & \textbf{Test Acc (\%)} \\ \hline
+1 & 42,47 & $6,01 \times 10^7$ & 26,09 & 88,10 & 86,88 \\ \hline
+2 & 29,12 & $1,25 \times 10^7$ & 23,83 & 88,04 & 86,65 \\ \hline
+3 & 28,96 & $1,25 \times 10^7$ & 23,83 & 87,44 & 86,50 \\ \hline
+4 & 26,76 & $1,25 \times 10^7$ & 23,83 & 87,14 & 85,98 \\ \hline
+5 & 27,62 & $1,25 \times 10^7$ & 23,83 & 87,94 & 86,52 \\ \hline
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{PyTorch efficiency results}
+\label{tab:pytorch_efficiency}
+\begin{tabular}{|c|c|c|c|}
+\hline
+\textbf{Trial} & \textbf{Time (s)} & \textbf{Train Acc (\%)} & \textbf{Test Acc (\%)} \\ \hline
+1 & 32.94 & 86.93 & 85.75 \\ \hline
+2 & 32.52 & 87.74 & 86.79 \\ \hline
+3 & 32.47 & 87.47 & 86.01 \\ \hline
+4 & 32.21 & 87.56 & 86.00 \\ \hline
+5 & 33.09 & 87.64 & 86.66 \\ \hline
+\end{tabular}
+\end{table}
+
 \subsection{Memory usage}
 
 \section{Conclusion}
