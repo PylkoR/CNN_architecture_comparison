@@ -7,6 +7,7 @@
 \usepackage{graphicx}
 \usepackage{textcomp}
 \usepackage{xcolor}
+\usepackage[colorlinks=true, urlcolor=blue, linkcolor=black, citecolor=black]{hyperref}
 \def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
     T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
 \begin{document}
@@ -29,7 +30,7 @@ michal.jagodzinski2.stud@pw.edu.pl}
 \maketitle
 
 \begin{abstract}
-This article presents a custom AD engine built from scratch in Julia, implementing backward accumulation via a computational graph. To achieve competitive performance, we applied several low-level optimizations: im2col transformations for convolutional layers, strict type stability enforcement, Float32 precision, and memory-efficient in-place operations combined with loop vectorization (@simd) and bounds checking elimination (@inbounds). We benchmarked our optimized library against PyTorch and Flux on a standard CNN architecture with fulll FashionMNIST dataset. Results show that our optimized implementation completes three training epochs in 19 seconds, compared to 30 seconds for Flux and 35 seconds for PyTorch. Additionally, our engine's memory allocation is only 30\% of that required by Flux. This study demonstrates that Julia can deliver exceptional performance for custom deep learning tools.
+This article presents a custom AD engine built from scratch in Julia, implementing backward accumulation via a computational graph. To achieve competitive performance, we applied several low-level optimizations: im2col transformations for convolutional layers, strict type stability enforcement, Float32 precision, and memory-efficient in-place operations combined with loop vectorization (@simd) and bounds checking elimination (@inbounds). We benchmarked our optimized library against PyTorch and Flux on a standard CNN architecture with fulll FashionMNIST dataset. Results show that our optimized implementation completes three training epochs in about 19 seconds, compared to 30 seconds for Flux and 33 seconds for PyTorch. Additionally, our engine's memory allocation is only about 10\% of that required by Flux. This study demonstrates that Julia can deliver exceptional performance for custom deep learning tools.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -39,47 +40,73 @@ Julia, CNN, optimization, PyTorch, Neural Networks, SDG, Auto Differentiation
 \section{Introduction}
 Deep learning architectures, particularly Convolutional Neural Networks (CNNs), demand massive computational resources and highly efficient gradient computation. Automatic Differentiation (AD) serves as the mathematical foundation of this process, enabling the dynamic and accurate computation of derivatives necessary for backpropagation. While established frameworks like PyTorch and Flux provide highly optimized, production-ready AD engines, their heavily abstracted nature often obscures the underlying performance bottlenecks and memory management challenges.
 
-The Julia programming language presents a compelling environment for deep learning by solving the "two-language problem" -- promising high-level, mathematically intuitive syntax combined with C-like execution speed. However, because Julia is dynamically typed, realizing its full performance potential requires deliberate architectural decisions. Naive implementations of neural network training in Julia frequently suffer from type instability, excessive memory allocation, and unoptimized loops. These issues invoke heavy Garbage Collector overhead and drastically degrade execution speed.
+The Julia programming language presents a compelling environment for deep learning by solving the "two-language problem" -- promising high-level, mathematically intuitive syntax combined with C-like execution speed. However, because Julia is dynamically typed, realizing its full performance potential requires deliberate architectural decisions. Naive implementations of neural network training in Julia frequently suffer from type instability, excessive memory allocation, and unoptimized loops.
 
-To investigate and overcome these fundamental bottlenecks, we developed a custom AD library from scratch, implementing backward accumulation over a dynamic computational graph. Building a custom engine provides granular control over the entire execution pipeline. This paper explores the critical optimizations required to make a custom Julia AD engine highly performant. By applying techniques such as im2col transformations, Float32 precision enforcement, strict type stability, and memory-efficient in-place operations, we demonstrate how to effectively bypass the overhead.
+To investigate and overcome these fundamental bottlenecks, we developed a custom AD library from scratch, implementing backward accumulation over a dynamic computational graph. Building a custom engine provides control over the entire execution pipeline. This article explores the critical optimizations required to make a custom Julia AD engine highly performant. By applying techniques such as im2col transformations, Float32 precision enforcement, strict type stability, and memory-efficient in-place operations, we demonstrate how to effectively bypass the overhead.
 
 \section{Literature review}
+Automatic Differentiation has become a fundamental tool in modern machine learning and numerical optimization. As Baydin et al. \cite{baydin2018} highlight in their comprehensive survey, AD is strictly distinct from both numerical approximation and symbolic differentiation. Instead of estimating derivatives or generating massive mathematical expressions, AD evaluates exact derivatives by breaking down computer programs into elementary operations. For machine learning models, which typically have thousands or millions of parameters and a single scalar loss output, the reverse mode of AD is the most efficient and widely used approach.
 
-\section{Methodology and implementation}
+Most popular deep learning frameworks, such as PyTorch \cite{paszke2019}, rely on dynamic computational graphs to implement reverse-mode AD. During the forward pass, PyTorch dynamically records the executed operations to build a graph, which is then traversed backward to compute gradients. While this method is highly flexible and user-friendly, it introduces runtime overhead. Furthermore, tools like PyTorch face the "two-language problem": they provide a convenient Python interface, but for performance reasons, the actual AD engine and mathematical operations must be written in low-level languages like C++. 
 
-• opis wybranego podejścia (różniczkowanie w przód/wstecz, graf obliczeniowy/metaprogramowanie etc.)
-• struktura biblioteki
-• wyzwania związane z implementacją (o charakterze naukowym!)
-• opis wykonanych optymalizacji (w tym związanych ze sposobem implementacji)
+The Julia programming language \cite{bezanson2017} was designed specifically to solve this two-language problem. Thanks to its Just-In-Time (JIT) compilation and multiple dispatch system, Julia allows developers to write high-level, readable code that runs at speeds comparable to C. This makes Julia an excellent environment for developing AD systems. Early solutions, such as the ForwardDiff package \cite{revels2016}, successfully utilized Julia's type system to implement forward-mode AD using dual numbers and operator overloading. 
 
-\subsection{Types instability}
+Beyond runtime dynamic graphs, optimizing reverse-mode AD requires integrating the differentiation process directly into the compilation pipeline. One such method is the "source-to-source" approach, utilized by the Zygote framework \cite{innes2018_zygote}. By transforming the program's intermediate representation (SSA form) during compilation, Zygote effectively eliminates the runtime overhead typical of graph tracing. Furthermore, AD optimizations can be pushed even deeper, closer to the hardware itself. As demonstrated by Moses and Churavy \cite{moses2020} with the Enzyme tool, performing automatic differentiation directly at the LLVM compiler level unlocks low-level performance enhancements well before the final machine code is generated.
 
-\subsection{im2col}
+Finally, while an efficient AD engine is crucial, the overall performance of a deep learning library heavily depends on the underlying mathematical operations. For example, CNNs require massive amounts of computation. Implementing convolutions using naive nested loops is highly inefficient. As demonstrated by Chellapilla et al. \cite{chellapilla2006}, this bottleneck can be overcome by unrolling input images into 2D matrices -- a technique known as \textit{im2col}. By reshaping the data, the complex convolution operation is transformed into a highly optimized General Matrix Multiplication.
+\section{Implementation and optimization}
 
-\subsection{float32}
+\subsection{Graph Architecture and AD Engine}
 
-\subsection{Weights initialization}
+The custom automatic differentiation library operating in reverse mode was implemented based on a directed acyclic computational graph. The intermediate nodes represent mathematical operations, while the leaves correspond to either input data tensors or trainable model parameters.
 
-\subsection{In-place operations}
+The graph topology is built dynamically during the network initialization phase. The derivative calculation is performed in two stages. First, a topological sorting algorithm based on depth-first search (DFS) generates a linear execution sequence of the nodes. Subsequently the forward propagation process is executed, followed by the backward propagation of gradients which is executed by sequentially calling the adjoint operators in reverse topological order.
 
-\section{Comparison with other libraries}
+The whole AD engine is based on the parametrized node structure: \texttt{GraphNode\{OP, N\}}, where \texttt{OP} is a symbol representing the operation (e.g. \texttt{:relu}), and \texttt{N} specifies the number of parent nodes. This design leverages Julia's multiple dispatch mechanism, allowing the Just-In-Time (JIT) compiler to generate specialized, highly optimized machine code independently for each operation type.
 
-\subsection{Time complexity}
+Every operator defines two fundamental functions:
+\begin{itemize}
+    \item \texttt{primal!(y::GraphNode\{OP, N\})} -- Responsible for the forward pass phase. It computes the node's value based on the data contained in its input arguments.
+    \item \texttt{adjoint!(y::GraphNode\{OP, N\})} -- Implements the backward pass step. It computes the partial derivatives and accumulates gradients in the input nodes.
+\end{itemize}
+
+\subsection{Implementation Challenges}
+The primary scientific and engineering challenge during the library's development was ensuring the mathematical correctness and numerical stability of adjoint operators for multidimensional operations, alongside efficient memory management.
+
+\textbf{Numerical stability and avoiding Jacobian allocation:} In the SoftMax layer, the standard approach to computing the gradient would require allocating a full, square Jacobian matrix, which would drastically increase memory complexity. This challenge was resolved by directly hardcoding the product of the Jacobian matrix and the upstream gradient vector using the following vector identity:
+$$x.grad \mathrel{+}= y.data \odot (y.grad - \sum(y.grad \odot y.data))$$
+This was implemented directly within the layer's backward step. Additionally, to prevent numerical overflow in the forward pass (\texttt{primal!}), the input values were translated by subtracting their local maximum. Similarly, in the CrossEntropy loss function, a small constant $\epsilon = 10^{-10}$ was introduced to prevent computing the logarithm of zero.
+
+\textbf{Stateless network operators:} Classic deep learning frameworks often suffer from a lack of separation between a layer's definition and its execution state. Our implementation adopts a functional programming paradigm: the operator structures themselves (such as \texttt{MaxPool} or \texttt{ConvLayer}) are immutable and stateless. The entire dynamic computational state---including output tensors, gradients, and cached data like dropout masks or pooling indices---is allocated and bound to a specific \texttt{GraphNode} instance only when the graph is built. This design allows for safe weight sharing and easy reuse of the same operators.
+
+\textbf{Sequential batch processing:} Instead of implementing full 4D tensor processing, which would require massive memory buffers, we opted for an architectural trade-off. The \texttt{train\_step!} procedure processes data batches sequentially using memory-safe \texttt{@view} macros. As a result, the memory required for convolutional transformations is allocated exclusively for a single sample. This drastically reduces RAM consumption at the cost of a minimal overhead in computational throughput.
+
+\subsection{Applied Performance Optimizations}
+To achieve execution speeds comparable to low-level languages like C or Fortran, several algorithmic optimizations were implemented, taking advantage of Julia's unique JIT compiler mechanisms.
+
+\textbf{The im2col algorithm and GEMM reduction:} A naive implementation of 2D convolutions using nested loops fails to utilize the CPU cache effectively. In our \texttt{ConvLayer}, we implemented the \texttt{im2col!} transformation, which reshapes the 3D input tensor into a 2D matrix. Consequently, both the forward convolution and its adjoint operation are reduced to General Matrix Multiplication (GEMM). These operations are executed in-place using the highly optimized LinearAlgebra (BLAS) library via the \texttt{mul!} function.
+
+\textbf{In-place operations and loop fusion:} To reduce the workload on the Garbage Collector, we always used vectorized operations using the \texttt{@.} macro and the dot-assignment operator (\texttt{.=}). Julia automatically performs loop fusion on these expressions, executing the entire operation in a single loop without allocating temporary arrays. Furthermore, the operational buffers for the \texttt{im2col} transformation are pre-allocated only once during the layer's initialization.
+
+\textbf{Type stability annotations:} Using dictionaries to represent cache memory (\texttt{Dict\{Symbol, Any\}}) inherently introduces type instability in Julia. This challenge was bypassed by applying explicit type assertions to the variables extracted from the dictionaries (e.g., asserting \texttt{::Matrix\{Float32\}} or \texttt{::Int}) immediately before they are used in loops. This practice allows the compiler to generate optimal machine code without the overhead of dynamic type checking.
+
+\textbf{Low-level compiler directives:} In the most performance-critical sections of the code responsible for matrix indexing (such as the \texttt{im2col!}, \texttt{col2im!}, and \texttt{MaxPool} functions), the loops were annotated with the \texttt{@inbounds} and \texttt{@simd} macros. The former disables costly array bounds checking, while the latter forces the compiler to vectorize loop instructions (utilizing AVX processor registers). This drastically improves the execution speed for operations on contiguous memory elements arranged in column-major order.
 
 \section{Test and comparison}
+To evaluate our engine, we compared its performance against two widely used libraries: Flux, developed in Julia, and PyTorch, which operates on Python and C++. We executed five identical, consecutive trials for each framework. The benchmark utilized a standard convolutional neural network architecture trained on the complete FashionMNIST dataset. Across all experiments, the learning rate was set to 0.01, the batch size to 10, and the models were trained for 3 epochs utilizing a standard gradient descent optimizer. Conducting five consecutive runs allows us to isolate the initial startup overhead from the actual steady-state training speed.
 
 \begin{table}[htbp]
 \centering
-\caption{My Network efficiency results}
+\caption{Our network efficiency results}
 \label{tab:mynet_efficiency}
 \begin{tabular}{|c|c|c|c|c|c|}
 \hline
-\textbf{Trial} & \textbf{Time (s)} & \textbf{Allocs} & \textbf{Mem (GB)} & \textbf{Train Acc (\%)} & \textbf{Test Acc (\%)} \\ \hline
-1 & 21,74 & $4,24 \times 10^7$ & 2,47 & 87,74 & 86,53 \\ \hline
-2 & 21,99 & $4,24 \times 10^7$ & 2,47 & 87,78 & 86,53 \\ \hline
-3 & 22,02 & $4,24 \times 10^7$ & 2,47 & 87,87 & 86,67 \\ \hline
-4 & 21,50 & $4,24 \times 10^7$ & 2,47 & 87,74 & 86,62 \\ \hline
-5 & 21,81 & $4,24 \times 10^7$ & 2,47 & 87,64 & 86,57 \\ \hline
+\textbf{Trial} & \textbf{Time (s)} & \textbf{Allocs} & \textbf{Mem (GB)} & \textbf{Test Acc (\%)} \\ \hline
+1 & 21,74 & $4,24 \times 10^7$ & 2,47 & 86,53 \\ \hline
+2 & 19,13 & $3,22 \times 10^7$ & 2,03 & 86,76 \\ \hline
+3 & 19,86 & $3,22 \times 10^7$ & 2,03 & 86,44 \\ \hline
+4 & 19,49 & $3,22 \times 10^7$ & 2,03 & 85,42 \\ \hline
+5 & 18,97 & $3,22 \times 10^7$ & 2,03 & 86,45 \\ \hline
 \end{tabular}
 \end{table}
 
@@ -89,14 +116,16 @@ To investigate and overcome these fundamental bottlenecks, we developed a custom
 \label{tab:flux_efficiency}
 \begin{tabular}{|c|c|c|c|c|c|}
 \hline
-\textbf{Trial} & \textbf{Time (s)} & \textbf{Allocs} & \textbf{Mem (GB)} & \textbf{Train Acc (\%)} & \textbf{Test Acc (\%)} \\ \hline
-1 & 42,47 & $6,01 \times 10^7$ & 26,09 & 88,10 & 86,88 \\ \hline
-2 & 29,12 & $1,25 \times 10^7$ & 23,83 & 88,04 & 86,65 \\ \hline
-3 & 28,96 & $1,25 \times 10^7$ & 23,83 & 87,44 & 86,50 \\ \hline
-4 & 26,76 & $1,25 \times 10^7$ & 23,83 & 87,14 & 85,98 \\ \hline
-5 & 27,62 & $1,25 \times 10^7$ & 23,83 & 87,94 & 86,52 \\ \hline
+\textbf{Trial} & \textbf{Time (s)} & \textbf{Allocs} & \textbf{Mem (GB)} & \textbf{Test Acc (\%)} \\ \hline
+1 & 42,47 & $6,01 \times 10^7$ & 26,09 & 86,88 \\ \hline
+2 & 29,12 & $1,25 \times 10^7$ & 23,83 & 86,65 \\ \hline
+3 & 28,96 & $1,25 \times 10^7$ & 23,83 & 86,50 \\ \hline
+4 & 26,76 & $1,25 \times 10^7$ & 23,83 & 85,98 \\ \hline
+5 & 27,62 & $1,25 \times 10^7$ & 23,83 & 86,52 \\ \hline
 \end{tabular}
 \end{table}
+
+The results for our custom library and Flux indicate that the first trial requires significantly more execution time and memory. This behavior is a direct consequence of Julia's Just-In-Time (JIT) compilation model. During the initial run, the compiler must translate the code, infer variable types, and generate the final machine instructions. However, it is important to note that our custom engine experiences noticeably less compilation overhead during this first run compared to Flux. The subsequent four trials are significantly faster because they utilize the previously compiled code. PyTorch does not exhibit this initial delay, as its core functions are pre-compiled in C++, resulting in highly consistent execution times across all five tests.
 
 \begin{table}[htbp]
 \centering
@@ -104,22 +133,57 @@ To investigate and overcome these fundamental bottlenecks, we developed a custom
 \label{tab:pytorch_efficiency}
 \begin{tabular}{|c|c|c|c|}
 \hline
-\textbf{Trial} & \textbf{Time (s)} & \textbf{Train Acc (\%)} & \textbf{Test Acc (\%)} \\ \hline
-1 & 32.94 & 86.93 & 85.75 \\ \hline
-2 & 32.52 & 87.74 & 86.79 \\ \hline
-3 & 32.47 & 87.47 & 86.01 \\ \hline
-4 & 32.21 & 87.56 & 86.00 \\ \hline
-5 & 33.09 & 87.64 & 86.66 \\ \hline
+\textbf{Trial} & \textbf{Time (s)} & \textbf{Test Acc (\%)} \\ \hline
+1 & 32.94 & 85.75 \\ \hline
+2 & 32.52 & 86.79 \\ \hline
+3 & 32.47 & 86.01 \\ \hline
+4 & 32.21 & 86.00 \\ \hline
+5 & 33.09 & 86.66 \\ \hline
 \end{tabular}
 \end{table}
 
-\subsection{Memory usage}
+Memory management was a primary focus during the development process. Comparing our library to Flux reveals a substantial reduction in memory consumption. While Flux required approximately 23.83 GB of memory during a steady-state run, our engine consumed only 2.03 GB, which is less than 10 percent of Flux's footprint. It should be noted that memory allocation data is omitted for PyTorch. We utilized Julia's native profiling tools to measure memory usage; however, because PyTorch manages its memory externally via C++, it cannot be evaluated equitably using the same methodology.
+
+\begin{table}[htbp]
+\centering
+\caption{Average efficiency results (5 trials)}
+\label{tab:average_efficiency}
+\begin{tabular}{|l|c|c|c|c|c|}
+\hline
+\textbf{Library} & \textbf{Time (s)} & \textbf{Train Acc (\%)} & \textbf{Test Acc (\%)} \\ \hline
+Our library & 19,84 & 87,57 & 86,32 \\ \hline
+Flux & 30,99 & 87,73 & 86,51 \\ \hline
+PyTorch & 32,65 & 87,47 & 86,24 \\ \hline
+\end{tabular}
+\end{table}
+
+Analyzing the average results across all five trials, our custom library demonstrated the fastest execution. It achieved an average time of 19.84 seconds, compared to 30.99 seconds for Flux and 32.65 seconds for PyTorch. This confirms that the applied code optimizations effectively accelerated the training process.
+
+Furthermore, all three libraries reached nearly identical accuracy levels. Since the exact same network architecture was used for every test, comparable final results were expected. The training accuracy stabilized around 87.5 percent, while the test accuracy reached approximately 86.3 percent. Obtaining identical results to established standard libraries under the same conditions serves as clear validation that our mathematical implementations and gradient calculations are correct.
 
 \section{Conclusion}
-Julia is fast.
+In this article, we presented a custom, highly optimized Automatic Differentiation engine in Julia that successfully competes with established frameworks. By eliminating type instability and utilizing in-place operations, our engine achieved the fastest average training time of 19.84 seconds and reduced memory consumption to less than 10\% of what Flux requires, while maintaining identical mathematical accuracy. 
+
+Despite these excellent results, the library has areas for potential improvement. Minor hidden memory allocations in layers like Dropout and Softmax could be eliminated by pre-allocating memory buffers, and the execution of heavy mathematical operations could be further optimized at the compiler level. Furthermore, the efficiency of convolutional layers could be enhanced by implementing the convolution operation using the Fast Fourier Transform (FFT) as a faster alternative to the current \textit{im2col} algorithm. Future development should also focus on integrating GPU acceleration, adopting compile-time gradient calculations to bypass initial JIT compilation delays, and expanding support for more complex architectures with more layers.
+
+\section*{Code Availability}
+The complete source code developed for this study, including the custom AD engine and all benchmark scripts, is publicly available in our GitHub repository: \url{https://github.com/PylkoR/CNN_architecture_comparison}.
 
 \begin{thebibliography}{00}
-\bibitem{b1} G. Eason, B. Noble, and I. N. Sneddon, ``On certain integrals of Lipschitz-Hankel type involving products of Bessel functions,'' Phil. Trans. Roy. Soc. London, vol. A247, pp. 529--551, April 1955.
+\bibitem{baydin2018}
+A. G. Baydin, B. A. Pearlmutter, A. A. Radul, and J. M. Siskind, ``Automatic Differentiation in Machine Learning: a Survey,'' \emph{Journal of Machine Learning Research}, vol. 18, no. 153, pp. 1--43, 2018.
+\bibitem{revels2016}
+J. Revels, M. Lubin, and T. Papamarkou, ``Forward-Mode Automatic Differentiation in Julia,'' \emph{arXiv preprint arXiv:1607.07892}, 2016.
+\bibitem{chellapilla2006}
+K. Chellapilla, S. Puri, and P. Simard, ``High Performance Convolutional Neural Networks for Document Processing,'' in \emph{Tenth International Workshop on Frontiers in Handwriting Recognition}, Suisun City, CA, USA, Oct. 2006.
+\bibitem{paszke2019}
+A. Paszke \emph{et al.}, ``PyTorch: An Imperative Style, High-Performance Deep Learning Library,'' in \emph{Advances in Neural Information Processing Systems (NeurIPS)}, vol. 32, pp. 8026--8037, 2019.
+\bibitem{innes2018_zygote}
+M. Innes, ``Don't Unroll Adjoint: Differentiating SSA-Form Programs,'' \emph{arXiv preprint arXiv:1810.07951}, 2018.
+\bibitem{bezanson2017}
+J. Bezanson, A. Edelman, S. Karpinski, and V. B. Shah, ``Julia: A Fresh Approach to Numerical Computing,'' \emph{SIAM Review}, vol. 59, no. 1, pp. 65--98, 2017.
+\bibitem{moses2020}
+W. S. Moses and V. Churavy, ``Instead of Rewriting Foreign Code for Machine Learning, Automatically Synthesize Fast Gradients,'' in \emph{Advances in Neural Information Processing Systems (NeurIPS)}, vol. 33, pp. 12472--12485, 2020.
 \end{thebibliography}
 
 \end{document}
